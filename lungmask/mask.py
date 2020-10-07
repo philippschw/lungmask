@@ -20,51 +20,45 @@ model_urls = {('unet', 'R231'): ('https://github.com/JoHof/lungmask/releases/dow
                   'https://github.com/JoHof/lungmask/releases/download/v0.0/unet_r231covid-0de78a7e.pth', 3)}
 
 
-def apply(image, model=None, force_cpu=False, batch_size=20, volume_postprocessing=True, noHU=False):
+def apply(img, model=None, force_cpu=False, batch_size=20, volume_postprocessing=True, noHU=False):
     if model is None:
         model = get_model('unet', 'R231')
-
-    inimg_raw = sitk.GetArrayFromImage(image)
-    directions = np.asarray(image.GetDirection())
-    if len(directions) == 9:
-        inimg_raw = np.flip(inimg_raw, np.where(directions[[0,4,8]][::-1]<0)[0])
-    del image
-
-    if force_cpu:
-        device = torch.device('cpu')
-    else:
-        if torch.cuda.is_available():
-            device = torch.device('cuda')
-        else:
-            logging.info("No GPU support available, will use CPU. Note, that this is significantly slower!")
-            batch_size = 1
-            device = torch.device('cpu')
-    model.to(device)
+    # if force_cpu:
+    #     device = torch.device('cpu')
+    # else:
+    #     if torch.cuda.is_available():
+    #         device = torch.device('cuda')
+    #     else:
+    #         logging.info("No GPU support available, will use CPU. Note, that this is significantly slower!")
+    #         batch_size = 1
+    #         device = torch.device('cpu')
+    # model.to(device)
 
     
     if not noHU:
-        tvolslices, xnew_box = utils.preprocess(inimg_raw, resolution=[256, 256])
+        tvolslices, xnew_box = utils.preprocess(img, resolution=[256, 256])
         tvolslices[tvolslices > 600] = 600
         tvolslices = np.divide((tvolslices + 1024), 1624)
     else:
         # support for non HU images. This is just a hack. The models were not trained with this in mind
-        tvolslices = skimage.color.rgb2gray(inimg_raw)
+        tvolslices = skimage.color.rgb2gray(img)
         tvolslices = skimage.transform.resize(tvolslices, [256, 256])
         tvolslices = np.asarray([tvolslices*x for x in np.linspace(0.3,2,20)])
         tvolslices[tvolslices>1] = 1
         sanity = [(tvolslices[x]>0.6).sum()>25000 for x in range(len(tvolslices))]
         tvolslices = tvolslices[sanity]
     torch_ds_val = utils.LungLabelsDS_inf(tvolslices)
-    dataloader_val = torch.utils.data.DataLoader(torch_ds_val, batch_size=batch_size, shuffle=False, num_workers=1,
+    dataloader_val = torch.utils.data.DataLoader(torch_ds_val, batch_size=batch_size, shuffle=False, num_workers=0,
                                                  pin_memory=False)
 
     timage_res = np.empty((np.append(0, tvolslices[0].shape)), dtype=np.uint8)
 
     with torch.no_grad():
         for X in tqdm(dataloader_val):
-            X = X.float().to(device)
+            X = X.float()#.to(device)
             prediction = model(X)
-            pls = torch.max(prediction, 1)[1].detach().cpu().numpy().astype(np.uint8)
+            # pls = torch.max(prediction, 1)[1].detach().cpu().numpy().astype(np.uint8)
+            pls = torch.max(prediction, 1)[1].numpy().astype(np.uint8)
             timage_res = np.vstack((timage_res, pls))
 
     # postprocessing includes removal of small connected components, hole filling and mapping of small components to
@@ -75,14 +69,14 @@ def apply(image, model=None, force_cpu=False, batch_size=20, volume_postprocessi
         outmask = timage_res
 
     if noHU:
-        outmask = skimage.transform.resize(outmask[np.argmax((outmask==1).sum(axis=(1,2)))], inimg_raw.shape[:2], order=0, anti_aliasing=False, preserve_range=True)[None,:,:]
+        outmask = skimage.transform.resize(outmask[np.argmax((outmask==1).sum(axis=(1,2)))], img.shape[:2], order=0, anti_aliasing=False, preserve_range=True)[None,:,:]
     else:
          outmask = np.asarray(
-            [utils.reshape_mask(outmask[i], xnew_box[i], inimg_raw.shape[1:]) for i in range(outmask.shape[0])],
+            [utils.reshape_mask(outmask[i], xnew_box[i], img.shape[1:]) for i in range(outmask.shape[0])],
             dtype=np.uint8)
         
-    if len(directions) == 9:
-        outmask = np.flip(outmask, np.where(directions[[0,4,8]][::-1]<0)[0])
+    # if len(directions) == 9:
+    #     outmask = np.flip(outmask, np.where(directions[[0,4,8]][::-1]<0)[0])
 
     return outmask.astype(np.uint8)
 
