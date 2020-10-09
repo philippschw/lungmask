@@ -9,6 +9,7 @@ from tqdm import tqdm
 import skimage
 import logging
 
+import ipdb
 
 logging.basicConfig(stream=sys.stdout, level=logging.INFO)
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -35,7 +36,6 @@ def apply(img, model=None, force_cpu=False, batch_size=20, volume_postprocessing
             device = torch.device('cpu')
     model.to(device)
 
-    
     if not noHU:
         tvolslices, xnew_box = utils.preprocess(img, resolution=[256, 256])
         tvolslices[tvolslices > 600] = 600
@@ -53,17 +53,19 @@ def apply(img, model=None, force_cpu=False, batch_size=20, volume_postprocessing
         torch_ds_val,
         batch_size=batch_size,
         shuffle=False,
-        num_workers=-1,
-        pin_memory=True,
+        num_workers=0,
+        pin_memory=False,
         )
 
     timage_res = np.empty((np.append(0, tvolslices[0].shape)), dtype=np.uint8)
 
     with torch.no_grad():
         for X in dataloader_val:
+            # ipdb.set_trace()
             X = X.float().to(device)
             prediction = model(X)
             pls = torch.max(prediction, 1)[1].detach().cpu().numpy().astype(np.uint8)
+            # pls = torch.max(prediction, 1)[1].detach().cpu().numpy().astype(np.uint8)
             timage_res = np.vstack((timage_res, pls))
 
     # postprocessing includes removal of small connected components, hole filling and mapping of small components to
